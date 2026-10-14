@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% block content %}
+<main class="login-layout">
+  <section class="story" aria-labelledby="story-title">
+    <div class="eyebrow"><span class="tiny-square"></span> EQUIPMENT. CONNECTED.</div>
+    <h1 id="story-title">Your next project<br>starts <em>here.</em></h1>
+    <p class="story-copy">One place to access the equipment you need.<br>From campus storage to a convenient pickup spot.</p>
+    <div class="locker-scene" aria-hidden="true">
+      <div class="scene-top"><span>SMARTSTORAGE</span><span class="scene-dot"></span></div>
+      <div class="lockers">
+        <div class="door"><span>01</span><i></i></div><div class="door"><span>02</span><i></i></div><div class="door"><span>03</span><i></i></div>
+        <div class="door"><span>04</span><i></i></div><div class="door gold"><span>05</span><i></i><b>READY FOR WHAT’S NEXT ↗</b></div><div class="door"><span>06</span><i></i></div>
+      </div>
+      <div class="scene-bottom"><span>STORAGE → PICKUP → RETURN</span><span>480 / SS</span></div>
+    </div>
+    <div class="workflow"><span><b>01</b> Reserve</span><span><b>02</b> Pick up</span><span><b>03</b> Return</span></div>
+  </section>
+  <section class="sign-in" aria-labelledby="login-title">
+    <div class="form-kicker">YOUR CAMPUS. YOUR EQUIPMENT.</div>
+    <h2 id="login-title">Welcome back.</h2>
+    <p class="form-copy">{% if local_auth_enabled %}Sign in to your prototype account to access SmartStorage.{% else %}Sign in with your Purdue account to access SmartStorage.{% endif %}</p>
+    {% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
+    {% if request.args.get('signed_out') %}<div class="notice" role="status">You’re signed out of SmartStorage.</div>{% endif %}
+    {% if request.args.get('registered') %}<div class="notice" role="status">Your account is ready. Sign in to get started.</div>{% endif %}
+    {% if local_auth_enabled %}
+    <form class="account-form" method="post" action="{{ url_for('local_login') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_]{3,32}" placeholder="Your username" value="{{ request.form.get('username', '') }}">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="128" placeholder="Your password">
+      <button class="sso-button" type="submit">Sign in<span aria-hidden="true">→</span></button>
+    </form>
+    <p class="register-link">New to SmartStorage? <a href="{{ url_for('register') }}">Create an account</a></p>
+    <div class="setup-note"><span class="status-dot"></span><strong>Prototype testing only</strong><p>Use a test password. Do not reuse your Purdue password or any other personal password.</p></div>
+    {% endif %}
+    {% if sso_ready or not local_auth_enabled %}
+    <div class="sso-divider">{% if local_auth_enabled %}OR USE CAMPUS SIGN-IN{% endif %}</div>
+    <form method="post" action="{{ url_for('start_sso') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="sso-button" type="submit"><span class="sso-icon" aria-hidden="true">↗</span>Continue with Purdue SSO<span aria-hidden="true">→</span></button>
+    </form>
+    <p class="security-note"><span aria-hidden="true">◇</span> Your Purdue password stays with Purdue.</p>
+    <div class="divider"></div>
+    <div class="account-info"><span class="info-icon" aria-hidden="true">i</span><p><strong>No separate account needed.</strong><br>Your profile is created when you first sign in. Purdue handles authentication and multifactor verification.</p></div>
+    {% endif %}
+    {% if not sso_ready %}<p class="pending-sso">Purdue SSO is planned for a future release.</p>{% endif %}
+    <p class="help-note">Need help accessing the portal?<br>Contact your ENGT 480 project team.</p>
+  </section>
+</main>
+{% endblock %}

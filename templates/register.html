@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block title %}Create an account{% endblock %}
+{% block content %}
+<main class="register-layout">
+  <section class="sign-in register-card" aria-labelledby="register-title">
+    <a class="back-link" href="{{ url_for('login') }}">← Back to sign in</a>
+    <div class="form-kicker">SMARTSTORAGE PROTOTYPE</div>
+    <h2 id="register-title">Make it your workspace.</h2>
+    <p class="form-copy">Create a test account. No campus SSO approval needed.</p>
+    {% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
+    <form class="account-form" method="post" action="{{ url_for('register') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="name">Display name</label>
+      <input id="name" name="name" type="text" autocomplete="nickname" required maxlength="80" placeholder="How should we greet you?" value="{{ request.form.get('name', '') }}">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_]{3,32}" placeholder="Choose a username" value="{{ request.form.get('username', '') }}" aria-describedby="username-help">
+      <p class="field-help" id="username-help">3–32 letters, numbers or underscores. Not case-sensitive.</p>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="128" placeholder="Choose a test password" aria-describedby="password-help">
+      <p class="field-help" id="password-help">8–128 characters. Do not reuse your Purdue password.</p>
+      <label for="confirm_password">Confirm password</label>
+      <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required minlength="8" maxlength="128" placeholder="Enter your password again">
+      <button class="sso-button" type="submit">Create account<span aria-hidden="true">→</span></button>
+    </form>
+    <p class="register-link">Already have an account? <a href="{{ url_for('login') }}">Sign in</a></p>
+    <div class="setup-note"><span class="status-dot"></span><strong>For project testing</strong><p>All new accounts receive the Student role. Prototype accounts are separate from Purdue identities.</p></div>
+  </section>
+</main>
+{% endblock %}

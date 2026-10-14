@@ -1,0 +1,33 @@
+{
+  "strict": true,
+  "debug": false,
+  "sp": {
+    "entityId": "https://YOUR-APP-HOST/auth/saml/metadata",
+    "assertionConsumerService": {
+      "url": "https://YOUR-APP-HOST/auth/saml/acs",
+      "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+    },
+    "NameIDFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+    "x509cert": "",
+    "privateKey": ""
+  },
+  "idp": {
+    "entityId": "REPLACE_WITH_APPROVED_PURDUE_IDP_ENTITY_ID",
+    "singleSignOnService": {
+      "url": "https://REPLACE-WITH-APPROVED-PURDUE-IDP/SSO",
+      "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+    },
+    "x509cert": "REPLACE_WITH_IDP_SIGNING_CERTIFICATE_FROM_VERIFIED_METADATA"
+  },
+  "security": {
+    "authnRequestsSigned": false,
+    "wantAssertionsSigned": true,
+    "wantMessagesSigned": false,
+    "wantXMLValidation": true,
+    "requestedAuthnContext": false,
+    "rejectUnsolicitedResponsesWithInResponseTo": true,
+    "rejectDeprecatedAlgorithm": true,
+    "signatureAlgorithm": "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+    "digestAlgorithm": "http://www.w3.org/2001/04/xmlenc#sha256"
+  }
+}

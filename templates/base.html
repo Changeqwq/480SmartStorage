@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="SmartStorage equipment lending portal. An ENGT 480 student project at Purdue University.">
+  <title>{% block title %}Sign in{% endblock %} · SmartStorage</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <header class="header">
+    <a href="{{ url_for('index') }}" class="brand"><span class="brand-mark" aria-hidden="true">S</span>SmartStorage<span class="brand-line">ENGT 480</span></a>
+    <span class="project-label">PURDUE UNIVERSITY <span>/ STUDENT PROJECT</span></span>
+  </header>
+  {% block content %}{% endblock %}
+  <footer class="footer"><span>Built for the next hands-on project.</span><span>ENGT 480 · Equipment lending & smart lockers</span></footer>
+</body>
+</html>

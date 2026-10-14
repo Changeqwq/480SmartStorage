@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% block title %}Your workspace{% endblock %}
+{% block content %}
+<main class="dashboard">
+  <div class="dashboard-top"><span class="eyebrow">YOUR WORKSPACE</span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="signout" type="submit">Sign out ↗</button></form></div>
+  <h1>Welcome, {{ g.user['name'] }}.</h1>
+  <p class="form-copy">{% if g.user['principal'].startswith('local:') %}You’re signed in with a prototype account.{% else %}You’re signed in through Purdue SSO.{% endif %} Your SmartStorage profile is ready.</p>
+  <div class="profile"><span class="avatar" aria-hidden="true">{{ g.user['name'][0]|upper }}</span><div><strong>{{ g.user['name'] }}</strong><p>{% if g.user['principal'].startswith('local:') %}@{{ g.user['principal'][6:] }} · Prototype account{% else %}{{ g.user['email'] }}{% endif %}</p></div><span class="role">{{ 'TA' if g.user['role'] == 'ta' else 'Student' }}</span></div>
+  <div class="dashboard-note"><span class="status-dot"></span>Equipment lending is coming next. Locker hardware is still being selected.</div>
+  <section class="feature-grid" aria-label="Upcoming features">
+    {% for number, title, text in [('01','Browse equipment','Find the tools and equipment for your next project.'),('02','Pickup & return','Manage your reservations and locker pickup details.'),('03','Your activity','See your lending history and current reservations.')] %}
+    <article class="feature"><div><span>{{ number }}</span><span class="coming">COMING SOON</span></div><h2>{{ title }}</h2><p>{{ text }}</p></article>
+    {% endfor %}
+  </section>
+  {% if g.user['role'] == 'ta' %}<div class="notice">TA profile enabled. Transfer, restocking and locker management will be added in a later phase.</div>{% endif %}
+</main>
+{% endblock %}
