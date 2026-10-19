@@ -6,6 +6,7 @@ import re
 import secrets
 import sqlite3
 import time
+import qrcode
 from functools import wraps
 from pathlib import Path
 from urllib.parse import urlsplit
