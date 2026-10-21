@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block title %}Browse equipment{% endblock %}
+{% block content %}
+<main class="app-page">
+  <section class="page-heading"><div><span class="eyebrow">EQUIPMENT CATALOG</span><h1>Find what you need.</h1><p>Search the current inventory and check availability before you start.</p></div></section>
+  <form class="filter-bar" method="get" action="{{ url_for('inventory.catalog') }}">
+    <label class="search-field"><span>Search</span><input name="q" value="{{ query }}" maxlength="80" placeholder="Item name, SKU, location…"></label>
+    <label><span>Category</span><select name="category"><option value="">All categories</option><option value="tool" {{ 'selected' if category=='tool' }}>Tools</option><option value="component" {{ 'selected' if category=='component' }}>Components</option><option value="consumable" {{ 'selected' if category=='consumable' }}>Consumables</option></select></label>
+    <label><span>Availability</span><select name="availability"><option value="">Any status</option><option value="available" {{ 'selected' if availability=='available' }}>Available</option><option value="unavailable" {{ 'selected' if availability=='unavailable' }}>Out of stock</option></select></label>
+    <button class="primary-button" type="submit">Search</button>
+  </form>
+  <div class="result-count"><strong>{{ items|length }}</strong> item{{ '' if items|length == 1 else 's' }} found{% if query %} for “{{ query }}”{% endif %}</div>
+  {% if items %}<section class="catalog-grid" aria-label="Search results">{% for item in items %}{% include 'partials/item_card.html' %}{% endfor %}</section>{% else %}<div class="empty-state"><h2>No matching equipment</h2><p>Try a different search or remove one of the filters.</p><a class="secondary-button" href="{{ url_for('inventory.catalog') }}">Clear filters</a></div>{% endif %}
+</main>
+{% endblock %}

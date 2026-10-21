@@ -6,7 +6,6 @@ import re
 import secrets
 import sqlite3
 import time
-import qrcode
 from functools import wraps
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -17,6 +16,8 @@ from flask import Flask, abort, g, redirect, render_template, request, session, 
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
 from onelogin.saml2.settings import OneLogin_Saml2_Settings
 from werkzeug.security import check_password_hash, generate_password_hash
+
+from inventory import get_dashboard_data, init_inventory_schema, inventory_bp
 
 ROOT = Path(__file__).resolve().parent
 
@@ -41,6 +42,7 @@ def create_app(test_config=None):
         SAML_SETTINGS_PATH=os.getenv('SAML_SETTINGS_PATH', ''),
         ALLOWED_PRINCIPALS=os.getenv('ALLOWED_PRINCIPALS', ''),
         LOCAL_AUTH_ENABLED=os.getenv('LOCAL_AUTH_ENABLED', 'true').lower() == 'true',
+        SEED_DEMO_DATA=os.getenv('SEED_DEMO_DATA', 'true').lower() == 'true',
         MAX_CONTENT_LENGTH=1024 * 1024,
         SESSION_COOKIE_NAME='smartstorage_session',
         SESSION_COOKIE_HTTPONLY=True,
@@ -107,6 +109,7 @@ def create_app(test_config=None):
         ''')
         if 'password_hash' not in {row['name'] for row in db().execute('PRAGMA table_info(users)')}:
             db().execute('ALTER TABLE users ADD COLUMN password_hash TEXT')
+        init_inventory_schema(db(), app.config['SEED_DEMO_DATA'])
         db().commit()
 
     def token_hash(token):
@@ -135,7 +138,8 @@ def create_app(test_config=None):
             g.auth_session = db().execute('SELECT * FROM sessions WHERE token=? AND expires>?',
                                          (token_hash(sid), int(time.time()))).fetchone()
         if g.auth_session and g.auth_session['user_id']:
-            g.user = db().execute('SELECT * FROM users WHERE id=?', (g.auth_session['user_id'],)).fetchone()
+            g.user = db().execute('SELECT * FROM users WHERE id=? AND active=1',
+                                  (g.auth_session['user_id'],)).fetchone()
         if not g.auth_session:
             if request.endpoint == 'acs':
                 return  # Missing correlation must fail; never create one here.
@@ -238,7 +242,8 @@ def create_app(test_config=None):
         connection.execute('''INSERT INTO login_attempts VALUES (?,1,?)
             ON CONFLICT(key) DO UPDATE SET attempts=attempts+1''', (key, now + 600))
         connection.commit()
-        user = connection.execute('SELECT * FROM users WHERE principal=?', ('local:' + username,)).fetchone()
+        user = connection.execute('SELECT * FROM users WHERE principal=? AND active=1',
+                                  ('local:' + username,)).fetchone()
         valid = (re.fullmatch(r'[a-z0-9_]{3,32}', username) and 8 <= len(password) <= 128
                  and user and user['password_hash'] and check_password_hash(user['password_hash'], password))
         if not valid:
@@ -331,7 +336,7 @@ def create_app(test_config=None):
     @app.get('/dashboard')
     @protected
     def dashboard():
-        return render_template('dashboard.html')
+        return render_template('dashboard.html', **get_dashboard_data(db(), g.user))
 
     @app.post('/logout')
     def logout():
@@ -342,6 +347,13 @@ def create_app(test_config=None):
     @app.errorhandler(503)
     def error_page(error):
         return render_template('login.html', error=error.description), error.code
+
+    @app.errorhandler(403)
+    @app.errorhandler(404)
+    def general_error_page(error):
+        return render_template('error.html', code=error.code,
+                               message='You do not have access to this page.' if error.code == 403
+                               else 'The page or record you requested could not be found.'), error.code
 
     @app.cli.command('set-role')
     @click.argument('principal')
@@ -361,6 +373,8 @@ def create_app(test_config=None):
             db().execute(f'DELETE FROM {table} WHERE expires<?', (int(time.time()),))
         db().commit()
         click.echo('Expired records removed.')
+
+    app.register_blueprint(inventory_bp)
 
     return app
 

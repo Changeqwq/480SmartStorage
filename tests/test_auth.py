@@ -50,7 +50,7 @@ class AuthenticationTests(unittest.TestCase):
         page = self.client.get('/dashboard')
         self.assertEqual(page.status_code, 200)
         self.assertIn(b'Test User', page.data)
-        self.assertIn(b'Prototype account', page.data)
+        self.assertIn(b'STUDENT WORKSPACE', page.data)
         cookie = self.client.get_cookie('smartstorage_session').value
         csrf = self.token(path='/dashboard')
         self.assertEqual(self.client.post('/logout', data={'csrf_token': csrf}).status_code, 303)
@@ -105,10 +105,10 @@ class AuthenticationTests(unittest.TestCase):
         runner = self.app.test_cli_runner()
         self.assertEqual(runner.invoke(args=['set-role', 'local:tester', 'ta']).exit_code, 0)
         self.login()
-        self.assertIn(b'TA profile enabled', self.client.get('/dashboard').data)
+        self.assertIn(b'TA / ADMIN WORKSPACE', self.client.get('/dashboard').data)
         self.assertNotEqual(runner.invoke(args=['set-role', 'local:missing', 'ta']).exit_code, 0)
         self.assertEqual(runner.invoke(args=['set-role', 'local:tester', 'student']).exit_code, 0)
-        self.assertNotIn(b'TA profile enabled', self.client.get('/dashboard').data)
+        self.assertNotIn(b'TA / ADMIN WORKSPACE', self.client.get('/dashboard').data)
 
     def test_profile_escapes_html_and_headers(self):
         self.register(name='<script>alert(1)</script>')

@@ -1,0 +1,3 @@
+{% extends 'base.html' %}
+{% block title %}{{ code }}{% endblock %}
+{% block content %}<main class="app-page narrow-page"><div class="empty-state"><span class="error-code">{{ code }}</span><h1>{{ 'Access denied' if code == 403 else 'Not found' }}</h1><p>{{ message }}</p><a class="primary-button" href="{{ url_for('dashboard') if g.user else url_for('login') }}">Return to dashboard</a></div></main>{% endblock %}

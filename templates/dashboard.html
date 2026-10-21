@@ -1,17 +1,24 @@
 {% extends 'base.html' %}
-{% block title %}Your workspace{% endblock %}
+{% block title %}Dashboard{% endblock %}
 {% block content %}
-<main class="dashboard">
-  <div class="dashboard-top"><span class="eyebrow">YOUR WORKSPACE</span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="signout" type="submit">Sign out ↗</button></form></div>
-  <h1>Welcome, {{ g.user['name'] }}.</h1>
-  <p class="form-copy">{% if g.user['principal'].startswith('local:') %}You’re signed in with a prototype account.{% else %}You’re signed in through Purdue SSO.{% endif %} Your SmartStorage profile is ready.</p>
-  <div class="profile"><span class="avatar" aria-hidden="true">{{ g.user['name'][0]|upper }}</span><div><strong>{{ g.user['name'] }}</strong><p>{% if g.user['principal'].startswith('local:') %}@{{ g.user['principal'][6:] }} · Prototype account{% else %}{{ g.user['email'] }}{% endif %}</p></div><span class="role">{{ 'TA' if g.user['role'] == 'ta' else 'Student' }}</span></div>
-  <div class="dashboard-note"><span class="status-dot"></span>Equipment lending is coming next. Locker hardware is still being selected.</div>
-  <section class="feature-grid" aria-label="Upcoming features">
-    {% for number, title, text in [('01','Browse equipment','Find the tools and equipment for your next project.'),('02','Pickup & return','Manage your reservations and locker pickup details.'),('03','Your activity','See your lending history and current reservations.')] %}
-    <article class="feature"><div><span>{{ number }}</span><span class="coming">COMING SOON</span></div><h2>{{ title }}</h2><p>{{ text }}</p></article>
-    {% endfor %}
+<main class="app-page dashboard-page">
+  <section class="page-heading"><div><span class="eyebrow">{{ 'TA / ADMIN WORKSPACE' if g.user['role'] == 'ta' else 'STUDENT WORKSPACE' }}</span><h1>Welcome back, {{ g.user['name'].split(' ')[0] }}.</h1><p>{{ 'Monitor inventory, lending activity, and account access.' if g.user['role'] == 'ta' else 'Find equipment, check it out, and keep track of every return.' }}</p></div><span class="role role-large">{{ 'TA / Admin' if g.user['role'] == 'ta' else 'Student' }}</span></section>
+  {% if g.user['role'] == 'ta' %}
+  <section class="metric-grid" aria-label="Inventory summary">
+    <a class="metric-card" href="{{ url_for('inventory.admin_items') }}"><span>Active items</span><strong>{{ active_items }}</strong><small>Manage inventory →</small></a>
+    <a class="metric-card" href="{{ url_for('inventory.admin_transactions') }}"><span>Units checked out</span><strong>{{ units_out }}</strong><small>View transactions →</small></a>
+    <a class="metric-card {{ 'metric-alert' if low_stock else '' }}" href="{{ url_for('inventory.admin_alerts') }}"><span>Low-stock alerts</span><strong>{{ low_stock }}</strong><small>Review stock →</small></a>
+    <a class="metric-card {{ 'metric-danger' if overdue else '' }}" href="{{ url_for('inventory.admin_alerts') }}"><span>Overdue loans</span><strong>{{ overdue }}</strong><small>Take action →</small></a>
   </section>
-  {% if g.user['role'] == 'ta' %}<div class="notice">TA profile enabled. Transfer, restocking and locker management will be added in a later phase.</div>{% endif %}
+  <section class="section-block"><div class="section-heading"><div><span class="eyebrow">RECENT ACTIVITY</span><h2>Latest transactions</h2></div><a class="secondary-button" href="{{ url_for('inventory.admin_transactions') }}">View all</a></div>
+    {% if recent_transactions %}<div class="table-wrap"><table><thead><tr><th>Action</th><th>Item</th><th>User</th><th>Quantity</th><th>Time</th></tr></thead><tbody>{% for transaction in recent_transactions %}<tr><td><span class="status-pill {{ transaction['action'] }}">{{ transaction['action']|title }}</span></td><td>{{ transaction['item_name'] }}</td><td>{{ transaction['user_name'] }}</td><td>{{ transaction['quantity'] }}</td><td>{{ transaction['created_at'][:16].replace('T',' ') }} UTC</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state"><h3>No transactions yet</h3><p>Checkout and return activity will appear here.</p></div>{% endif %}
+  </section>
+  {% else %}
+  <section class="quick-actions" aria-label="Quick actions"><a class="primary-action" href="{{ url_for('inventory.catalog') }}"><span>01</span><div><strong>Browse equipment</strong><small>Search tools, components, and consumables</small></div><b>→</b></a><a class="secondary-action" href="{{ url_for('inventory.loans') }}"><span>02</span><div><strong>My loans</strong><small>View QR credentials, due dates, and returns</small></div><b>→</b></a></section>
+  <section class="section-block"><div class="section-heading"><div><span class="eyebrow">CURRENTLY CHECKED OUT</span><h2>Your active loans</h2></div><a class="secondary-button" href="{{ url_for('inventory.loans') }}">View history</a></div>
+    {% if active_loans %}<div class="loan-list">{% for loan in active_loans %}<a class="loan-row" href="{{ url_for('inventory.loan_detail', loan_id=loan['id']) }}"><div><strong>{{ loan['item_name'] }}</strong><small>{{ loan['storage_location'] }} · Quantity {{ loan['quantity'] }}</small></div><div><span>Due</span><strong>{{ loan['due_at'][:10] }}</strong></div><b>→</b></a>{% endfor %}</div>{% else %}<div class="empty-state"><h3>No active loans</h3><p>Browse the catalog to find equipment for your next project.</p><a class="primary-button" href="{{ url_for('inventory.catalog') }}">Browse equipment</a></div>{% endif %}
+  </section>
+  <section class="section-block"><div class="section-heading"><div><span class="eyebrow">AVAILABLE NOW</span><h2>Recently added</h2></div></div><div class="catalog-grid compact">{% for item in recent_items %}{% include 'partials/item_card.html' %}{% endfor %}</div></section>
+  {% endif %}
 </main>
 {% endblock %}

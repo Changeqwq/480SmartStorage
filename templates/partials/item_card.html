@@ -1,0 +1,7 @@
+<article class="item-card">
+  <div class="item-card-top"><span class="category-tag">{{ item['category'] }}</span><span class="availability {{ 'available' if item['quantity_available'] else 'unavailable' }}">{{ item['quantity_available'] }} available</span></div>
+  <div class="item-illustration" aria-hidden="true"><span>{{ item['name'][0]|upper }}</span><small>{{ item['sku'] }}</small></div>
+  <h2>{{ item['name'] }}</h2><p>{{ item['description'] }}</p>
+  <div class="item-meta"><span>{{ item['storage_location'] }}</span><span>{{ item['quantity_available'] }}/{{ item['quantity_total'] }}</span></div>
+  <a class="card-link" href="{{ url_for('inventory.item_detail', item_id=item['id']) }}">View details <span>→</span></a>
+</article>

@@ -1,10 +1,10 @@
 # 480SmartStorage
 
 Purdue ENGT 480 equipment lending and smart locker student project.
-This first milestone implements English, responsive **prototype registration and
-password login**, a protected dashboard, SQLite user profiles, Student/TA roles
-and sign-out. An optional Purdue SAML SSO module is ready for future integration.
-Storage and outdoor pickup are separate future workflows; no locker controls exist yet.
+This prototype implements English, responsive username/password authentication,
+student equipment browsing and lending, QR pickup credentials, inventory updates,
+transaction history, and a TA/Admin workspace. An optional Purdue SAML SSO module
+remains available for future integration after campus approval.
 
 ## Current status
 
@@ -49,6 +49,7 @@ If `.env` already exists, keep it instead of copying over it.
 The initial development secret is generated once in ignored `instance/secret.key`.
 In deployment, set a strong `SECRET_KEY` through server environment variables.
 Database and session data are in ignored `instance/smartstorage.sqlite`.
+Six demonstration inventory items are created when the database is empty.
 
 ## Developer commands
 
@@ -66,6 +67,14 @@ The Student role currently means the application's regular user role, **not**
 proof of active student enrollment. Pilot membership can be restricted with
 `ALLOWED_PRINCIPALS` and the IdP's application access policy.
 
+To enable the TA/Admin prototype after registering an account:
+
+```powershell
+.\.venv\Scripts\python.exe -m flask --app 'app:create_app' set-role local:YOUR_USERNAME ta
+```
+
+Sign out and sign in again. The same command with `student` removes staff access.
+
 ## Routes
 
 | Route | Behavior |
@@ -77,7 +86,24 @@ proof of active student enrollment. Pilot membership can be restricted with
 | `POST /auth/saml/acs` | Validated SAML callback |
 | `GET /auth/saml/metadata` | SP metadata after configuration |
 | `GET /dashboard` | Authenticated user workspace |
+| `GET /catalog` | Search and filter active inventory |
+| `GET /items/<id>` | Item details and availability |
+| `POST /items/<id>/checkout` | Atomic inventory checkout |
+| `GET /loans` | Current and historical user loans |
+| `GET /loans/<id>/qr.png` | Authenticated QR pickup credential |
+| `POST /loans/<id>/return` | Atomic return and inventory update |
+| `GET /admin` | TA/Admin inventory summary |
+| `GET /admin/items` | Add, edit, restock, or deactivate items |
+| `GET /admin/transactions` | Filter the lending audit trail |
+| `GET /admin/alerts` | Low-stock and overdue alerts |
+| `GET /admin/users` | Manage roles and account status |
 | `POST /logout` | Revoke this app's session; Purdue's SSO session remains active |
+
+Checkout and return operations use immediate database transactions so concurrent
+requests cannot silently create negative inventory or double-return an item.
+QR codes contain an opaque, random loan URL; they do not contain passwords or
+personal profile data. Scanning still requires an authenticated account with
+permission to view that loan.
 
 ## Deployment boundary
 
@@ -100,6 +126,17 @@ Local accounts have no access to future SSO accounts, even with matching names.
 Set `LOCAL_AUTH_ENABLED=false` to disable registration and local login once you
 switch to the approved SSO integration.
 
+SQLite is the default database for the local prototype. The schema separates users,
+items, loans, and immutable transaction records so it can later move to MariaDB.
+The current code uses SQLite transactions and SQL syntax and must not be pointed at
+MariaDB without the adapter work described in [Database migration](docs/DATABASE.md).
+Installing the `mariadb` driver alone does not make the application compatible.
+
+The hardware boundary and proposed locker gateway contract are documented in
+[Hardware integration](docs/HARDWARE_INTEGRATION.md). The web backend will authorize
+commands and issue opaque identifiers; a future gateway will own lock-board and
+door-sensor communication.
+
 Purdue IT must confirm signature algorithms and certificate requirements before
 activation. This is an integration MVP, not a completed campus deployment.
 Real Purdue MFA, attribute release, certificate rollover and campus interoperability
@@ -108,10 +145,13 @@ must be tested with the approved non-production IdP application.
 ## Project structure
 
 ```text
-app.py                     Flask routes, SAML validation, server-side sessions
-templates/                 Login and protected dashboard
+app.py                     Authentication, sessions, and application setup
+inventory.py               Catalog, lending, QR, alerts, and staff workflows
+templates/                 Responsive student and TA/Admin pages
 static/styles.css          Responsive interface; no external assets
 saml/settings.example.json Deployment configuration template
 docs/PURDUE_SSO_SETUP.md    Purdue IT request and acceptance checklist
-tests/                     Authentication and route tests
+docs/DATABASE.md            MariaDB migration boundary
+docs/HARDWARE_INTEGRATION.md Future locker gateway contract
+tests/                     Authentication, authorization, and lending tests
 ```

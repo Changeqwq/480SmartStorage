@@ -10,8 +10,17 @@
 <body>
   <header class="header">
     <a href="{{ url_for('index') }}" class="brand"><span class="brand-mark" aria-hidden="true">S</span>SmartStorage<span class="brand-line">ENGT 480</span></a>
-    <span class="project-label">PURDUE UNIVERSITY <span>/ STUDENT PROJECT</span></span>
+    {% if g.user %}
+    <nav class="main-nav" aria-label="Primary navigation">
+      <a href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('inventory.catalog') }}">Browse</a>
+      <a href="{{ url_for('inventory.loans') }}">My loans</a>
+      {% if g.user['role'] == 'ta' %}<a href="{{ url_for('inventory.admin_dashboard') }}">Admin</a>{% endif %}
+    </nav>
+    <div class="header-account"><span>{{ g.user['name'] }}</span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="text-button" type="submit">Sign out</button></form></div>
+    {% else %}<span class="project-label">PURDUE UNIVERSITY <span>/ STUDENT PROJECT</span></span>{% endif %}
   </header>
+  {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack" aria-live="polite">{% for category, message in messages %}<div class="notice {{ 'error' if category == 'error' else '' }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
   {% block content %}{% endblock %}
   <footer class="footer"><span>Built for the next hands-on project.</span><span>ENGT 480 · Equipment lending & smart lockers</span></footer>
 </body>
