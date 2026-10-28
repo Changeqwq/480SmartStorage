@@ -120,6 +120,21 @@ A phone camera or ordinary QR scanner only decodes the QR image into text such a
 hardware is connected, use PowerShell or Postman to simulate the locker gateway
 sending that scanned code to the backend.
 
+### Double-click launcher on Windows
+
+Windows does not normally execute `.ps1` files when they are double-clicked. After
+configuring `.env` and starting `app.py`, double-click `Run-Locker-Scan.cmd` in the
+repository root. The launcher opens PowerShell, asks for the exact code printed
+below the QR, sends it to the locker API, and keeps the result window open.
+
+The `.cmd` launcher applies `ExecutionPolicy Bypass` only to that one PowerShell
+process. It does not change the computer's global execution policy. Its underlying
+script is `scripts/simulate-locker-scan.ps1` and can also be run directly:
+
+```powershell
+.\scripts\simulate-locker-scan.ps1
+```
+
 First, add a local prototype key to `.env`:
 
 ```env
