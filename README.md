@@ -6,6 +6,11 @@ student equipment browsing and lending, QR pickup credentials, inventory updates
 transaction history, and a TA/Admin workspace. An optional Purdue SAML SSO module
 remains available for future integration after campus approval.
 
+Each account receives a unique numeric User ID from the database. Locker QR codes
+use `P-ITEM_ID-USER_ID` for pickup and `R-ITEM_ID-USER_ID` for return. After a
+student requests checkout, a TA must confirm locker drop-off before the pickup QR
+is activated. The seven-day due period begins when the locker accepts the pickup.
+
 ## Current status
 
 The app runs locally now. Create a test account with a username, display name
@@ -88,11 +93,13 @@ Sign out and sign in again. The same command with `student` removes staff access
 | `GET /dashboard` | Authenticated user workspace |
 | `GET /catalog` | Search and filter active inventory |
 | `GET /items/<id>` | Item details and availability |
-| `POST /items/<id>/checkout` | Atomic inventory checkout |
+| `POST /items/<id>/checkout` | Reserve inventory and request TA drop-off |
 | `GET /loans` | Current and historical user loans |
-| `GET /loans/<id>/qr.png` | Authenticated QR pickup credential |
-| `POST /loans/<id>/return` | Atomic return and inventory update |
+| `GET /loans/<id>/pickup-qr.png` | Pickup QR after TA drop-off |
+| `GET /loans/<id>/return-qr.png` | Separate return QR after pickup |
+| `POST /api/locker/scan` | Authenticated locker pickup/return event |
 | `GET /admin` | TA/Admin inventory summary |
+| `POST /admin/loans/<id>/confirm-dropoff` | TA locker drop-off confirmation |
 | `GET /admin/items` | Add, edit, restock, or deactivate items |
 | `GET /admin/transactions` | Filter the lending audit trail |
 | `GET /admin/alerts` | Low-stock and overdue alerts |
@@ -101,9 +108,10 @@ Sign out and sign in again. The same command with `student` removes staff access
 
 Checkout and return operations use immediate database transactions so concurrent
 requests cannot silently create negative inventory or double-return an item.
-QR codes contain an opaque, random loan URL; they do not contain passwords or
-personal profile data. Scanning still requires an authenticated account with
-permission to view that loan.
+QR codes contain the requested action, numeric Item ID, and numeric User ID. They
+never contain a password. The code alone is not authorization: the locker gateway
+must authenticate with `LOCKER_API_KEY`, and the backend verifies the current loan
+state before accepting a pickup or return. Use a long random value in deployment.
 
 ## Deployment boundary
 

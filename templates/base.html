@@ -17,7 +17,7 @@
       <a href="{{ url_for('inventory.loans') }}">My loans</a>
       {% if g.user['role'] == 'ta' %}<a href="{{ url_for('inventory.admin_dashboard') }}">Admin</a>{% endif %}
     </nav>
-    <div class="header-account"><span>{{ g.user['name'] }}</span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="text-button" type="submit">Sign out</button></form></div>
+    <div class="header-account"><span>{{ g.user['name'] }} · ID #{{ g.user['id'] }}</span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="text-button" type="submit">Sign out</button></form></div>
     {% else %}<span class="project-label">PURDUE UNIVERSITY <span>/ STUDENT PROJECT</span></span>{% endif %}
   </header>
   {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack" aria-live="polite">{% for category, message in messages %}<div class="notice {{ 'error' if category == 'error' else '' }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}

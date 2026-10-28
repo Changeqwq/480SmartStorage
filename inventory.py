@@ -6,11 +6,13 @@ import re
 import secrets
 import sqlite3
 
-from flask import Blueprint, abort, flash, g, redirect, render_template, request, send_file, url_for
+from flask import (Blueprint, abort, current_app, flash, g, jsonify, redirect,
+                   render_template, request, send_file, url_for)
 import qrcode
 
 
 inventory_bp = Blueprint('inventory', __name__)
+ACTIVE_LOAN_STATUSES = ('awaiting_dropoff', 'ready_for_pickup', 'checked_out')
 
 
 def utc_now():
@@ -21,8 +23,70 @@ def iso(value):
     return value.isoformat().replace('+00:00', 'Z')
 
 
+def _create_lending_tables(connection):
+    connection.executescript('''
+        CREATE TABLE IF NOT EXISTS loans (
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            item_id INTEGER NOT NULL REFERENCES items(id),
+            quantity INTEGER NOT NULL CHECK(quantity > 0),
+            status TEXT NOT NULL CHECK(status IN
+                ('awaiting_dropoff','ready_for_pickup','checked_out','returned')),
+            checked_out_at TEXT NOT NULL,
+            dropoff_confirmed_at TEXT,
+            picked_up_at TEXT,
+            due_at TEXT,
+            returned_at TEXT,
+            pickup_token TEXT UNIQUE NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY,
+            loan_id INTEGER NOT NULL REFERENCES loans(id),
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            item_id INTEGER NOT NULL REFERENCES items(id),
+            action TEXT NOT NULL CHECK(action IN ('checkout','dropoff','pickup','return')),
+            quantity INTEGER NOT NULL CHECK(quantity > 0),
+            created_at TEXT NOT NULL
+        );
+    ''')
+
+
+def _migrate_lending_tables(connection):
+    """Expand older two-state loans without losing prototype records."""
+    loan_sql = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='loans'"
+    ).fetchone()
+    if not loan_sql or 'awaiting_dropoff' in loan_sql[0]:
+        return
+    connection.commit()
+    connection.execute('PRAGMA foreign_keys=OFF')
+    try:
+        connection.executescript('''
+            ALTER TABLE transactions RENAME TO transactions_legacy;
+            ALTER TABLE loans RENAME TO loans_legacy;
+        ''')
+        _create_lending_tables(connection)
+        connection.executescript('''
+            INSERT INTO loans
+                (id,user_id,item_id,quantity,status,checked_out_at,
+                 dropoff_confirmed_at,picked_up_at,due_at,returned_at,pickup_token)
+            SELECT id,user_id,item_id,quantity,status,checked_out_at,
+                   checked_out_at,checked_out_at,due_at,returned_at,pickup_token
+            FROM loans_legacy;
+            INSERT INTO transactions
+                (id,loan_id,user_id,item_id,action,quantity,created_at)
+            SELECT id,loan_id,user_id,item_id,action,quantity,created_at
+            FROM transactions_legacy;
+            DROP TABLE transactions_legacy;
+            DROP TABLE loans_legacy;
+        ''')
+        connection.commit()
+    finally:
+        connection.execute('PRAGMA foreign_keys=ON')
+
+
 def init_inventory_schema(connection, seed_demo_data=True):
-    """Create additive prototype tables without replacing existing user data."""
+    """Create additive prototype tables and migrate existing local data."""
     user_columns = {row['name'] for row in connection.execute('PRAGMA table_info(users)')}
     if 'active' not in user_columns:
         connection.execute('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1')
@@ -41,27 +105,11 @@ def init_inventory_schema(connection, seed_demo_data=True):
             created_at TEXT NOT NULL,
             CHECK(quantity_available <= quantity_total)
         );
-        CREATE TABLE IF NOT EXISTS loans (
-            id INTEGER PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES users(id),
-            item_id INTEGER NOT NULL REFERENCES items(id),
-            quantity INTEGER NOT NULL CHECK(quantity > 0),
-            status TEXT NOT NULL CHECK(status IN ('checked_out','returned')),
-            checked_out_at TEXT NOT NULL,
-            due_at TEXT NOT NULL,
-            returned_at TEXT,
-            pickup_token TEXT UNIQUE NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY,
-            loan_id INTEGER NOT NULL REFERENCES loans(id),
-            user_id INTEGER NOT NULL REFERENCES users(id),
-            item_id INTEGER NOT NULL REFERENCES items(id),
-            action TEXT NOT NULL CHECK(action IN ('checkout','return')),
-            quantity INTEGER NOT NULL CHECK(quantity > 0),
-            created_at TEXT NOT NULL
-        );
         CREATE INDEX IF NOT EXISTS idx_items_name ON items(name);
+    ''')
+    _migrate_lending_tables(connection)
+    _create_lending_tables(connection)
+    connection.executescript('''
         CREATE INDEX IF NOT EXISTS idx_loans_user_status ON loans(user_id, status);
         CREATE INDEX IF NOT EXISTS idx_loans_due ON loans(status, due_at);
         CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at);
@@ -114,9 +162,21 @@ def get_dashboard_data(connection, user):
     if user['role'] == 'ta':
         return {
             'active_items': connection.execute('SELECT COUNT(*) FROM items WHERE active=1').fetchone()[0],
-            'units_out': connection.execute("SELECT COALESCE(SUM(quantity),0) FROM loans WHERE status='checked_out'").fetchone()[0],
+            'units_out': connection.execute(
+                "SELECT COALESCE(SUM(quantity),0) FROM loans WHERE status!='returned'"
+            ).fetchone()[0],
             'low_stock': connection.execute('SELECT COUNT(*) FROM items WHERE active=1 AND quantity_available<=low_stock_threshold').fetchone()[0],
             'overdue': connection.execute("SELECT COUNT(*) FROM loans WHERE status='checked_out' AND due_at<?", (iso(utc_now()),)).fetchone()[0],
+            'pending_dropoffs': connection.execute('''
+                SELECT l.*,i.name AS item_name,i.sku,i.storage_location,
+                       u.name AS user_name,u.id AS borrower_id
+                FROM loans l JOIN items i ON i.id=l.item_id
+                JOIN users u ON u.id=l.user_id
+                WHERE l.status='awaiting_dropoff' ORDER BY l.checked_out_at
+            ''').fetchall(),
+            'ready_pickups': connection.execute(
+                "SELECT COUNT(*) FROM loans WHERE status='ready_for_pickup'"
+            ).fetchone()[0],
             'recent_transactions': connection.execute('''
                 SELECT t.*, i.name AS item_name, u.name AS user_name
                 FROM transactions t JOIN items i ON i.id=t.item_id JOIN users u ON u.id=t.user_id
@@ -127,7 +187,9 @@ def get_dashboard_data(connection, user):
         'active_loans': connection.execute('''
             SELECT l.*, i.name AS item_name, i.storage_location
             FROM loans l JOIN items i ON i.id=l.item_id
-            WHERE l.user_id=? AND l.status='checked_out' ORDER BY l.due_at
+            WHERE l.user_id=? AND l.status!='returned'
+            ORDER BY CASE l.status WHEN 'ready_for_pickup' THEN 0
+                     WHEN 'awaiting_dropoff' THEN 1 ELSE 2 END, l.checked_out_at DESC
         ''', (user['id'],)).fetchall(),
         'recent_items': connection.execute('''
             SELECT * FROM items WHERE active=1 ORDER BY created_at DESC, name LIMIT 3
@@ -172,11 +234,12 @@ def item_detail(item_id):
     if not item:
         abort(404)
     active_loan = g.db.execute('''
-        SELECT * FROM loans WHERE user_id=? AND item_id=? AND status='checked_out'
+        SELECT * FROM loans WHERE user_id=? AND item_id=? AND status!='returned'
         ORDER BY checked_out_at DESC LIMIT 1
     ''', (g.user['id'], item_id)).fetchone()
     next_return = g.db.execute('''
-        SELECT MIN(due_at) FROM loans WHERE item_id=? AND status='checked_out'
+        SELECT MIN(due_at) FROM loans
+        WHERE item_id=? AND status='checked_out' AND due_at IS NOT NULL
     ''', (item_id,)).fetchone()[0]
     return render_template('item_detail.html', item=item, active_loan=active_loan,
                            next_return=next_return)
@@ -203,13 +266,19 @@ def checkout_item(item_id):
             connection.rollback()
             flash('That quantity is no longer available. Refresh and try again.', 'error')
             return redirect(url_for('inventory.item_detail', item_id=item_id))
+        existing = connection.execute('''
+            SELECT id FROM loans WHERE user_id=? AND item_id=? AND status!='returned'
+        ''', (g.user['id'], item_id)).fetchone()
+        if existing:
+            connection.rollback()
+            flash('You already have an active request for this item.', 'error')
+            return redirect(url_for('inventory.loan_detail', loan_id=existing['id']))
         now = utc_now()
-        due = now + timedelta(days=7)
         token = secrets.token_urlsafe(24)
         cursor = connection.execute('''
             INSERT INTO loans(user_id,item_id,quantity,status,checked_out_at,due_at,pickup_token)
-            VALUES (?,?,?,'checked_out',?,?,?)
-        ''', (g.user['id'], item_id, quantity, iso(now), iso(due), token))
+            VALUES (?,?,?,'awaiting_dropoff',?,NULL,?)
+        ''', (g.user['id'], item_id, quantity, iso(now), token))
         loan_id = cursor.lastrowid
         connection.execute('UPDATE items SET quantity_available=quantity_available-? WHERE id=?',
                            (quantity, item_id))
@@ -221,7 +290,7 @@ def checkout_item(item_id):
     except sqlite3.Error:
         connection.rollback()
         raise
-    flash('Checkout confirmed. Your pickup QR credential is ready.', 'success')
+    flash('Checkout requested. A TA must place the item in the locker before pickup.', 'success')
     return redirect(url_for('inventory.loan_detail', loan_id=loan_id), code=303)
 
 
@@ -256,22 +325,14 @@ def loan_detail(loan_id):
     return render_template('loan_detail.html', loan=permitted_loan(loan_id), now=iso(utc_now()))
 
 
-@inventory_bp.get('/pickup/<token>')
-@login_required
-def pickup_token(token):
-    if not re.fullmatch(r'[A-Za-z0-9_-]{20,64}', token):
-        abort(404)
-    loan = g.db.execute('SELECT id FROM loans WHERE pickup_token=?', (token,)).fetchone()
-    if not loan:
-        abort(404)
-    return redirect(url_for('inventory.loan_detail', loan_id=loan['id']))
+def locker_code(action, item_id, user_id):
+    """Return the hardware-readable code stored in a pickup or return QR."""
+    if action not in {'P', 'R'}:
+        raise ValueError('Unknown locker action.')
+    return f'{action}-{item_id}-{user_id}'
 
 
-@inventory_bp.get('/loans/<int:loan_id>/qr.png')
-@login_required
-def loan_qr(loan_id):
-    loan = permitted_loan(loan_id)
-    payload = request.url_root.rstrip('/') + url_for('inventory.pickup_token', token=loan['pickup_token'])
+def _qr_response(payload, filename):
     qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M,
                        box_size=8, border=3)
     qr.add_data(payload)
@@ -280,12 +341,94 @@ def loan_qr(loan_id):
     output = BytesIO()
     image.save(output, format='PNG')
     output.seek(0)
-    return send_file(output, mimetype='image/png', download_name=f'smartstorage-loan-{loan_id}.png')
+    response = send_file(output, mimetype='image/png', download_name=filename)
+    response.headers['X-SmartStorage-Code'] = payload
+    return response
 
 
-@inventory_bp.post('/loans/<int:loan_id>/return')
+@inventory_bp.get('/loans/<int:loan_id>/pickup-qr.png')
 @login_required
-def return_item(loan_id):
+def pickup_qr(loan_id):
+    loan = permitted_loan(loan_id)
+    if loan['status'] != 'ready_for_pickup':
+        abort(409, description='The pickup QR becomes available after TA drop-off confirmation.')
+    code = locker_code('P', loan['item_id'], loan['user_id'])
+    return _qr_response(code, f'smartstorage-pickup-{loan_id}.png')
+
+
+@inventory_bp.get('/loans/<int:loan_id>/return-qr.png')
+@login_required
+def return_qr(loan_id):
+    loan = permitted_loan(loan_id)
+    if loan['status'] != 'checked_out':
+        abort(409, description='The return QR is available after the item is picked up.')
+    code = locker_code('R', loan['item_id'], loan['user_id'])
+    return _qr_response(code, f'smartstorage-return-{loan_id}.png')
+
+
+def process_locker_scan(connection, code):
+    """Apply one authenticated locker scan and return the updated loan."""
+    match = re.fullmatch(r'([PR])-(\d+)-(\d+)', (code or '').strip().upper())
+    if not match:
+        raise ValueError('Use P-ITEM_ID-USER_ID or R-ITEM_ID-USER_ID.')
+    action, item_id, user_id = match.group(1), int(match.group(2)), int(match.group(3))
+    try:
+        connection.execute('BEGIN IMMEDIATE')
+        required_status = 'ready_for_pickup' if action == 'P' else 'checked_out'
+        loan = connection.execute('''
+            SELECT * FROM loans WHERE item_id=? AND user_id=? AND status=?
+            ORDER BY id DESC LIMIT 1
+        ''', (item_id, user_id, required_status)).fetchone()
+        if not loan:
+            connection.rollback()
+            expected = 'ready for pickup' if action == 'P' else 'currently picked up'
+            raise ValueError(f'No matching loan is {expected}.')
+        now_value = utc_now()
+        now = iso(now_value)
+        if action == 'P':
+            connection.execute('''
+                UPDATE loans SET status='checked_out',picked_up_at=?,due_at=? WHERE id=?
+            ''', (now, iso(now_value + timedelta(days=7)), loan['id']))
+            transaction_action = 'pickup'
+        else:
+            connection.execute('''
+                UPDATE loans SET status='returned',returned_at=? WHERE id=?
+            ''', (now, loan['id']))
+            connection.execute('''
+                UPDATE items SET quantity_available=quantity_available+? WHERE id=?
+            ''', (loan['quantity'], loan['item_id']))
+            transaction_action = 'return'
+        connection.execute('''
+            INSERT INTO transactions(loan_id,user_id,item_id,action,quantity,created_at)
+            VALUES (?,?,?,?,?,?)
+        ''', (loan['id'], loan['user_id'], loan['item_id'], transaction_action,
+              loan['quantity'], now))
+        connection.commit()
+    except sqlite3.Error:
+        connection.rollback()
+        raise
+    return connection.execute('SELECT * FROM loans WHERE id=?', (loan['id'],)).fetchone()
+
+
+@inventory_bp.post('/api/locker/scan')
+def locker_scan():
+    expected_key = current_app.config.get('LOCKER_API_KEY', '')
+    supplied_key = request.headers.get('X-Locker-Key', '')
+    if not expected_key:
+        return jsonify(error='Locker API is not configured.'), 503
+    if not secrets.compare_digest(supplied_key, expected_key):
+        return jsonify(error='Locker authentication failed.'), 401
+    payload = request.get_json(silent=True) or {}
+    try:
+        loan = process_locker_scan(g.db, payload.get('code', ''))
+    except ValueError as error:
+        return jsonify(error=str(error)), 409
+    return jsonify(loan_id=loan['id'], status=loan['status'])
+
+
+@inventory_bp.post('/admin/loans/<int:loan_id>/confirm-dropoff')
+@staff_required
+def confirm_dropoff(loan_id):
     connection = g.db
     try:
         connection.execute('BEGIN IMMEDIATE')
@@ -293,26 +436,23 @@ def return_item(loan_id):
         if not loan:
             connection.rollback()
             abort(404)
-        if loan['user_id'] != g.user['id'] and g.user['role'] != 'ta':
+        if loan['status'] != 'awaiting_dropoff':
             connection.rollback()
-            abort(403)
-        if loan['status'] != 'checked_out':
-            connection.rollback()
-            flash('This item has already been returned.', 'error')
+            flash('This checkout is no longer waiting for drop-off.', 'error')
             return redirect(url_for('inventory.loan_detail', loan_id=loan_id))
         now = iso(utc_now())
-        connection.execute("UPDATE loans SET status='returned',returned_at=? WHERE id=?", (now, loan_id))
-        connection.execute('UPDATE items SET quantity_available=quantity_available+? WHERE id=?',
-                           (loan['quantity'], loan['item_id']))
+        connection.execute('''
+            UPDATE loans SET status='ready_for_pickup',dropoff_confirmed_at=? WHERE id=?
+        ''', (now, loan_id))
         connection.execute('''
             INSERT INTO transactions(loan_id,user_id,item_id,action,quantity,created_at)
-            VALUES (?,?,?,'return',?,?)
+            VALUES (?,?,?,'dropoff',?,?)
         ''', (loan_id, loan['user_id'], loan['item_id'], loan['quantity'], now))
         connection.commit()
     except sqlite3.Error:
         connection.rollback()
         raise
-    flash('Return confirmed and inventory updated.', 'success')
+    flash('Drop-off confirmed. The student pickup QR is now active.', 'success')
     return redirect(url_for('inventory.loan_detail', loan_id=loan_id), code=303)
 
 
@@ -393,7 +533,7 @@ def admin_item_edit(item_id):
     if request.method == 'GET':
         return render_template('admin/item_form.html', item=item)
     values, error = item_form_values()
-    outstanding = g.db.execute("SELECT COALESCE(SUM(quantity),0) FROM loans WHERE item_id=? AND status='checked_out'",
+    outstanding = g.db.execute("SELECT COALESCE(SUM(quantity),0) FROM loans WHERE item_id=? AND status!='returned'",
                                (item_id,)).fetchone()[0]
     if not error and values.get('quantity_total', -1) - values.get('quantity_available', -1) < outstanding:
         error = f'Inventory must account for {outstanding} unit(s) currently checked out.'
@@ -424,7 +564,7 @@ def admin_transactions():
     query = request.args.get('q', '').strip()[:80]
     date_from = request.args.get('from', '')
     date_to = request.args.get('to', '')
-    if action in {'checkout', 'return'}:
+    if action in {'checkout', 'dropoff', 'pickup', 'return'}:
         clauses.append('t.action=?')
         parameters.append(action)
     else:
@@ -473,7 +613,7 @@ def admin_alerts():
 @staff_required
 def admin_users():
     users = g.db.execute('''
-        SELECT u.*,COUNT(CASE WHEN l.status='checked_out' THEN 1 END) AS active_loans
+        SELECT u.*,COUNT(CASE WHEN l.status!='returned' THEN 1 END) AS active_loans
         FROM users u LEFT JOIN loans l ON l.user_id=u.id
         GROUP BY u.id ORDER BY u.active DESC,u.name
     ''').fetchall()

@@ -10,10 +10,28 @@ commands into the selected hardware protocol and report physical state changes.
 Web app → Backend authorization → Locker gateway → Lock controller → Lock / sensors
 ```
 
-The current QR credential contains an opaque loan URL. It exposes no password,
-inventory record, or user details. It is suitable for prototype scanning, but it
-does not unlock hardware. A production unlock flow must check the signed-in user,
-loan status, assigned compartment, token expiry, and gateway state on the server.
+The web app generates two different QR codes for each active loan:
+
+- `P-ITEM_ID-USER_ID` for pickup
+- `R-ITEM_ID-USER_ID` for return
+
+The numeric User ID is an application identifier, not a Purdue identifier. A code
+contains no password, but it is predictable and must not be treated as a secret.
+The locker gateway authenticates to the backend with `X-Locker-Key`, then sends the
+scanned code to `POST /api/locker/scan`. The backend accepts pickup only after a TA
+confirms drop-off and accepts return only after pickup. Duplicate scans do not
+repeat inventory changes.
+
+```http
+POST /api/locker/scan
+X-Locker-Key: <LOCKER_API_KEY>
+Content-Type: application/json
+
+{"code":"P-3-12"}
+```
+
+A successful response contains the loan ID and new status. Store a long random
+`LOCKER_API_KEY` outside source control and rotate it if the gateway is replaced.
 
 ## Proposed gateway contract
 
@@ -41,7 +59,7 @@ the business event and record the missing independent verification.
 
 1. Select the lock board protocol and obtain official documentation.
 2. Build a two-door gateway simulator with the event contract above.
-3. Add compartment assignment and expiring unlock authorization to the backend.
+3. Add compartment assignment and short-lived unlock authorization to the backend.
 4. Connect the simulator, then one control board and two locks.
 5. Test expired QR codes, duplicate commands, simultaneous requests, open doors,
    disconnected gateways, restart recovery, and power loss.

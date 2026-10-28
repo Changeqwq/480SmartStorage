@@ -16,7 +16,8 @@ class InventoryWorkflowTests(unittest.TestCase):
         self.database = str(Path(self.temp.name) / 'inventory.sqlite')
         self.app = create_app({'TESTING': True, 'SECRET_KEY': 'test-secret-only',
                                'DATABASE': self.database, 'SAML_SETTINGS_PATH': '',
-                               'LOCAL_AUTH_ENABLED': True, 'SEED_DEMO_DATA': True})
+                               'LOCAL_AUTH_ENABLED': True, 'SEED_DEMO_DATA': True,
+                               'LOCKER_API_KEY': 'locker-test-key'})
         self.client = self.app.test_client()
         self.register_and_login('student', 'Student User')
 
@@ -52,7 +53,7 @@ class InventoryWorkflowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(item['name'].encode(), response.data)
 
-    def test_checkout_qr_and_return_update_inventory_once(self):
+    def test_staged_dropoff_pickup_and_return_qr_workflow(self):
         item = self.item()
         response = self.client.post(f"/items/{item['id']}/checkout",
                                     data={'csrf_token': self.csrf(f"/items/{item['id']}"), 'quantity': '2'})
@@ -64,18 +65,59 @@ class InventoryWorkflowTests(unittest.TestCase):
                                            (item['id'],)).fetchone()[0]
             self.assertEqual(available, item['quantity_available'] - 2)
             self.assertEqual(connection.execute('SELECT COUNT(*) FROM transactions').fetchone()[0], 1)
-        qr = self.client.get(f'/loans/{loan_id}/qr.png')
-        self.assertEqual(qr.status_code, 200)
-        self.assertEqual(qr.mimetype, 'image/png')
-        self.assertGreater(len(qr.data), 500)
+            loan = connection.execute('SELECT * FROM loans WHERE id=?', (loan_id,)).fetchone()
+            user_id = loan[1]
+            self.assertEqual(loan[4], 'awaiting_dropoff')
+            self.assertIsNone(loan[8])
+        self.assertEqual(self.client.get(f'/loans/{loan_id}/pickup-qr.png').status_code, 409)
+
+        self.logout()
+        self.register_and_login('staff', 'Staff User')
+        runner = self.app.test_cli_runner()
+        self.assertEqual(runner.invoke(args=['set-role', 'local:staff', 'ta']).exit_code, 0)
+        self.logout()
+        token = self.csrf('/login')
+        self.client.post('/auth/local/login', data={'csrf_token': token,
+                         'username': 'staff', 'password': 'prototype-123'})
         token = self.csrf(loan_url)
-        self.assertEqual(self.client.post(f'/loans/{loan_id}/return', data={'csrf_token': token}).status_code, 303)
-        token = self.csrf(loan_url)
-        self.client.post(f'/loans/{loan_id}/return', data={'csrf_token': token})
+        self.assertEqual(self.client.post(f'/admin/loans/{loan_id}/confirm-dropoff',
+                                         data={'csrf_token': token}).status_code, 303)
+
+        self.logout()
+        token = self.csrf('/login')
+        self.client.post('/auth/local/login', data={'csrf_token': token,
+                         'username': 'student', 'password': 'prototype-123'})
+        pickup_qr = self.client.get(f'/loans/{loan_id}/pickup-qr.png')
+        self.assertEqual(pickup_qr.status_code, 200)
+        self.assertEqual(pickup_qr.headers['X-SmartStorage-Code'], f"P-{item['id']}-{user_id}")
+        self.assertGreater(len(pickup_qr.data), 500)
+        self.assertEqual(self.client.get(f'/loans/{loan_id}/return-qr.png').status_code, 409)
+
+        pickup = self.client.post('/api/locker/scan', json={'code': f"P-{item['id']}-{user_id}"},
+                                  headers={'X-Locker-Key': 'locker-test-key'})
+        self.assertEqual(pickup.status_code, 200)
+        self.assertEqual(pickup.json['status'], 'checked_out')
+        return_qr = self.client.get(f'/loans/{loan_id}/return-qr.png')
+        self.assertEqual(return_qr.status_code, 200)
+        self.assertEqual(return_qr.headers['X-SmartStorage-Code'], f"R-{item['id']}-{user_id}")
+        self.assertNotEqual(pickup_qr.data, return_qr.data)
+        returned = self.client.post('/api/locker/scan', json={'code': f"R-{item['id']}-{user_id}"},
+                                    headers={'X-Locker-Key': 'locker-test-key'})
+        self.assertEqual(returned.status_code, 200)
+        self.assertEqual(returned.json['status'], 'returned')
+        duplicate = self.client.post('/api/locker/scan', json={'code': f"R-{item['id']}-{user_id}"},
+                                     headers={'X-Locker-Key': 'locker-test-key'})
+        self.assertEqual(duplicate.status_code, 409)
         with closing(sqlite3.connect(self.database)) as connection:
             self.assertEqual(connection.execute('SELECT quantity_available FROM items WHERE id=?',
                                                 (item['id'],)).fetchone()[0], item['quantity_available'])
-            self.assertEqual(connection.execute('SELECT COUNT(*) FROM transactions').fetchone()[0], 2)
+            self.assertEqual(connection.execute('SELECT COUNT(*) FROM transactions').fetchone()[0], 4)
+
+    def test_locker_api_requires_key_and_valid_code(self):
+        self.assertEqual(self.client.post('/api/locker/scan', json={'code': 'P-1-1'}).status_code, 401)
+        response = self.client.post('/api/locker/scan', json={'code': 'invalid'},
+                                    headers={'X-Locker-Key': 'locker-test-key'})
+        self.assertEqual(response.status_code, 409)
 
     def test_cannot_checkout_more_than_available(self):
         item = self.item()
@@ -96,7 +138,7 @@ class InventoryWorkflowTests(unittest.TestCase):
                 (other_id, item['id'])).lastrowid
             connection.commit()
         self.assertEqual(self.client.get(f'/loans/{loan_id}').status_code, 403)
-        self.assertEqual(self.client.get(f'/loans/{loan_id}/qr.png').status_code, 403)
+        self.assertEqual(self.client.get(f'/loans/{loan_id}/return-qr.png').status_code, 403)
 
     def test_ta_inventory_and_user_management(self):
         self.logout()

@@ -41,6 +41,7 @@ def create_app(test_config=None):
         PUBLIC_BASE_URL=os.getenv('PUBLIC_BASE_URL', 'http://127.0.0.1:5000').rstrip('/'),
         SAML_SETTINGS_PATH=os.getenv('SAML_SETTINGS_PATH', ''),
         ALLOWED_PRINCIPALS=os.getenv('ALLOWED_PRINCIPALS', ''),
+        LOCKER_API_KEY=os.getenv('LOCKER_API_KEY', ''),
         LOCAL_AUTH_ENABLED=os.getenv('LOCAL_AUTH_ENABLED', 'true').lower() == 'true',
         SEED_DEMO_DATA=os.getenv('SEED_DEMO_DATA', 'true').lower() == 'true',
         MAX_CONTENT_LENGTH=1024 * 1024,
@@ -144,7 +145,7 @@ def create_app(test_config=None):
             if request.endpoint == 'acs':
                 return  # Missing correlation must fail; never create one here.
             new_session()
-        if request.method == 'POST' and request.endpoint != 'acs':
+        if request.method == 'POST' and request.endpoint not in {'acs', 'inventory.locker_scan'}:
             supplied = request.form.get('csrf_token', '')
             if not secrets.compare_digest(supplied, g.auth_session['csrf']):
                 abort(400, description='This form expired. Refresh the page and try again.')
