@@ -134,15 +134,18 @@ The loan page will display a pickup code in this format:
 P-ITEM_ID-USER_ID
 ```
 
-For example, simulate scanning `P-3-12` from a second PowerShell window:
+From a second PowerShell window, enter the exact pickup code printed below the QR.
+Do not copy an Item ID or User ID from this README:
 
 ```powershell
 $lockerHeaders = @{
     "X-Locker-Key" = "prototype-locker-test-key-2026"
 }
 
+$pickupCode = Read-Host "Enter the pickup code shown below the QR"
+
 $lockerBody = @{
-    code = "P-3-12"
+    code = $pickupCode
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -154,12 +157,14 @@ Invoke-RestMethod `
 ```
 
 The response should identify the loan and report `checked_out`. Refresh the loan
-page to see a separate return QR in the format `R-ITEM_ID-USER_ID`. Send that code
-with the same command by replacing the body:
+page to see a separate return QR in the format `R-ITEM_ID-USER_ID`. Enter the exact
+new return code printed below that QR and send it with the same command:
 
 ```powershell
+$returnCode = Read-Host "Enter the return code shown below the QR"
+
 $lockerBody = @{
-    code = "R-3-12"
+    code = $returnCode
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -175,8 +180,8 @@ and confirm that inventory increased once. Repeating the return scan produces a
 `409` response and does not increase inventory again.
 
 The same request can be sent with Postman: use `POST`, select raw JSON for the body,
-send `{"code":"P-3-12"}`, and add an `X-Locker-Key` header matching `.env`.
-Replace the sample IDs with the exact code printed below the QR on the loan page.
+send `{"code":"PASTE_THE_EXACT_QR_CODE_HERE"}`, and add an `X-Locker-Key` header
+matching `.env`.
 
 Common responses:
 
