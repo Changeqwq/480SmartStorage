@@ -113,6 +113,77 @@ never contain a password. The code alone is not authorization: the locker gatewa
 must authenticate with `LOCKER_API_KEY`, and the backend verifies the current loan
 state before accepting a pickup or return. Use a long random value in deployment.
 
+## Test the locker QR workflow
+
+A phone camera or ordinary QR scanner only decodes the QR image into text such as
+`P-3-12`. It does not contact SmartStorage or change the loan. Until physical locker
+hardware is connected, use PowerShell or Postman to simulate the locker gateway
+sending that scanned code to the backend.
+
+First, add a local prototype key to `.env`:
+
+```env
+LOCKER_API_KEY=prototype-locker-test-key-2026
+```
+
+Restart `app.py` after changing `.env`; environment settings are loaded at startup.
+Complete checkout as a student, then sign in as a TA and confirm the locker drop-off.
+The loan page will display a pickup code in this format:
+
+```text
+P-ITEM_ID-USER_ID
+```
+
+For example, simulate scanning `P-3-12` from a second PowerShell window:
+
+```powershell
+$lockerHeaders = @{
+    "X-Locker-Key" = "prototype-locker-test-key-2026"
+}
+
+$lockerBody = @{
+    code = "P-3-12"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Uri "http://127.0.0.1:5000/api/locker/scan" `
+    -Method Post `
+    -Headers $lockerHeaders `
+    -ContentType "application/json" `
+    -Body $lockerBody
+```
+
+The response should identify the loan and report `checked_out`. Refresh the loan
+page to see a separate return QR in the format `R-ITEM_ID-USER_ID`. Send that code
+with the same command by replacing the body:
+
+```powershell
+$lockerBody = @{
+    code = "R-3-12"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Uri "http://127.0.0.1:5000/api/locker/scan" `
+    -Method Post `
+    -Headers $lockerHeaders `
+    -ContentType "application/json" `
+    -Body $lockerBody
+```
+
+The response should report `returned`. Refresh the page to see **Return complete**
+and confirm that inventory increased once. Repeating the return scan produces a
+`409` response and does not increase inventory again.
+
+The same request can be sent with Postman: use `POST`, select raw JSON for the body,
+send `{"code":"P-3-12"}`, and add an `X-Locker-Key` header matching `.env`.
+Replace the sample IDs with the exact code printed below the QR on the loan page.
+
+Common responses:
+
+- `401`: the `X-Locker-Key` header is missing or does not match `.env`.
+- `409`: the code is invalid or the loan is not at the required pickup/return stage.
+- `503`: `LOCKER_API_KEY` is blank; configure it and restart the app.
+
 ## Deployment boundary
 
 `app.py` runs Waitress on loopback. Deploy behind an HTTPS reverse proxy forwarding
