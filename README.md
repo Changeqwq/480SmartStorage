@@ -123,9 +123,9 @@ sending that scanned code to the backend.
 ### Double-click launcher on Windows
 
 Windows does not normally execute `.ps1` files when they are double-clicked. After
-configuring `.env` and starting `app.py`, double-click `Run-Locker-Scan.cmd` in the
-repository root. The launcher opens PowerShell, asks for the exact code printed
-below the QR, sends it to the locker API, and keeps the result window open.
+starting `app.py`, double-click `Run-Locker-Scan.cmd` in the repository root. The
+launcher opens PowerShell, asks for the exact code printed below the QR, sends it
+to the locker API, and keeps the result window open.
 
 The `.cmd` launcher applies `ExecutionPolicy Bypass` only to that one PowerShell
 process. It does not change the computer's global execution policy. Its underlying
@@ -135,7 +135,10 @@ script is `scripts/simulate-locker-scan.ps1` and can also be run directly:
 .\scripts\simulate-locker-scan.ps1
 ```
 
-First, add a local prototype key to `.env`:
+No external API account or manual key is required for local prototype testing.
+On first startup, `app.py` creates `instance/locker.key`; both that file and the
+local database are ignored by Git. The simulator reads the generated key
+automatically. For a deployed gateway, override it with a long secret in `.env`:
 
 ```env
 LOCKER_API_KEY=prototype-locker-test-key-2026
@@ -202,7 +205,7 @@ Common responses:
 
 - `401`: the `X-Locker-Key` header is missing or does not match `.env`.
 - `409`: the code is invalid or the loan is not at the required pickup/return stage.
-- `503`: `LOCKER_API_KEY` is blank; configure it and restart the app.
+- `503`: the server has not been restarted since the local key was created.
 
 ## Deployment boundary
 

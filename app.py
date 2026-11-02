@@ -35,13 +35,22 @@ def create_app(test_config=None):
         except FileExistsError:
             pass
         secret = secret_file.read_text(encoding='utf-8').strip()
+    locker_key = os.getenv('LOCKER_API_KEY')
+    if not locker_key:
+        locker_key_file = Path(app.instance_path) / 'locker.key'
+        try:
+            with locker_key_file.open('x', encoding='utf-8') as file:
+                file.write(secrets.token_urlsafe(32))
+        except FileExistsError:
+            pass
+        locker_key = locker_key_file.read_text(encoding='utf-8').strip()
     app.config.update(
         SECRET_KEY=secret,
         DATABASE=str(Path(app.instance_path) / 'smartstorage.sqlite'),
         PUBLIC_BASE_URL=os.getenv('PUBLIC_BASE_URL', 'http://127.0.0.1:5000').rstrip('/'),
         SAML_SETTINGS_PATH=os.getenv('SAML_SETTINGS_PATH', ''),
         ALLOWED_PRINCIPALS=os.getenv('ALLOWED_PRINCIPALS', ''),
-        LOCKER_API_KEY=os.getenv('LOCKER_API_KEY', ''),
+        LOCKER_API_KEY=locker_key,
         LOCAL_AUTH_ENABLED=os.getenv('LOCAL_AUTH_ENABLED', 'true').lower() == 'true',
         SEED_DEMO_DATA=os.getenv('SEED_DEMO_DATA', 'true').lower() == 'true',
         MAX_CONTENT_LENGTH=1024 * 1024,

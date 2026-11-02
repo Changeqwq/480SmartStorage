@@ -6,6 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $environmentPath = Join-Path $repositoryRoot ".env"
+$generatedKeyPath = Join-Path $repositoryRoot "instance\locker.key"
 $lockerKey = $env:LOCKER_API_KEY
 
 if ([string]::IsNullOrWhiteSpace($lockerKey) -and (Test-Path -LiteralPath $environmentPath)) {
@@ -17,9 +18,13 @@ if ([string]::IsNullOrWhiteSpace($lockerKey) -and (Test-Path -LiteralPath $envir
     }
 }
 
+if ([string]::IsNullOrWhiteSpace($lockerKey) -and (Test-Path -LiteralPath $generatedKeyPath)) {
+    $lockerKey = (Get-Content -LiteralPath $generatedKeyPath -Raw).Trim()
+}
+
 if ([string]::IsNullOrWhiteSpace($lockerKey)) {
-    Write-Host "Locker API is not configured." -ForegroundColor Red
-    Write-Host "Add LOCKER_API_KEY to .env, then restart app.py."
+    Write-Host "Local locker key has not been created yet." -ForegroundColor Red
+    Write-Host "Start app.py once, then run this simulator again."
     exit 1
 }
 
