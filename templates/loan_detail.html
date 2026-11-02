@@ -1,19 +1,91 @@
 {% extends 'base.html' %}
 {% block title %}Loan #{{ loan['id'] }}{% endblock %}
 {% block content %}
-<main class="app-page narrow-page"><a class="back-link" href="{{ url_for('inventory.loans') if g.user['role'] != 'ta' or loan['user_id']==g.user['id'] else url_for('inventory.admin_transactions') }}">← Back to activity</a>
-  <section class="credential-card"><div class="credential-copy"><span class="eyebrow">LOAN #{{ '%04d'|format(loan['id']) }}</span><h1>{{ loan['item_name'] }}</h1><p>{{ loan['sku'] }} · {{ loan['storage_location'] }}</p>
-    <div class="credential-status"><span class="status-pill {{ 'overdue' if loan['status']=='checked_out' and loan['due_at'] and loan['due_at'] < now else loan['status'] }}">{{ 'Overdue' if loan['status']=='checked_out' and loan['due_at'] and loan['due_at'] < now else loan['status'].replace('_',' ')|title }}</span></div>
-    <ol class="loan-steps" aria-label="Loan progress"><li class="complete">Checkout requested</li><li class="{{ 'complete' if loan['status'] in ('ready_for_pickup','checked_out','returned') else 'current' }}">TA locker drop-off</li><li class="{{ 'complete' if loan['status'] in ('checked_out','returned') else 'current' if loan['status']=='ready_for_pickup' else '' }}">Student pickup scan</li><li class="{{ 'complete' if loan['status']=='returned' else 'current' if loan['status']=='checked_out' else '' }}">Student return scan</li></ol>
-    <dl class="detail-list"><div><dt>Borrower</dt><dd>{{ loan['user_name'] }}</dd></div><div><dt>User ID</dt><dd>#{{ loan['user_id'] }}</dd></div><div><dt>Item ID</dt><dd>#{{ loan['item_id'] }}</dd></div><div><dt>Quantity</dt><dd>{{ loan['quantity'] }}</dd></div><div><dt>Requested</dt><dd>{{ loan['checked_out_at'][:10] }}</dd></div>{% if loan['dropoff_confirmed_at'] %}<div><dt>TA drop-off</dt><dd>{{ loan['dropoff_confirmed_at'][:16].replace('T',' ') }} UTC</dd></div>{% endif %}{% if loan['picked_up_at'] %}<div><dt>Picked up</dt><dd>{{ loan['picked_up_at'][:16].replace('T',' ') }} UTC</dd></div>{% endif %}{% if loan['due_at'] %}<div><dt>Due</dt><dd>{{ loan['due_at'][:10] }}</dd></div>{% endif %}{% if loan['returned_at'] %}<div><dt>Returned</dt><dd>{{ loan['returned_at'][:16].replace('T',' ') }} UTC</dd></div>{% endif %}</dl>
-    {% if loan['status']=='awaiting_dropoff' %}<div class="notice"><strong>Waiting for TA drop-off</strong><br>The pickup QR will appear after a TA places the item in the locker and confirms the drop-off.</div>{% endif %}
-    {% if g.user['role']=='ta' and loan['status']=='awaiting_dropoff' %}<form class="dropoff-form" method="post" action="{{ url_for('inventory.confirm_dropoff', loan_id=loan['id']) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="primary-button" type="submit">Confirm locker drop-off</button></form>{% endif %}
-  </div>
-  <div class="qr-panel">
-    {% if loan['status']=='ready_for_pickup' %}<img src="{{ url_for('inventory.pickup_qr', loan_id=loan['id']) }}" alt="Pickup QR code for loan {{ loan['id'] }}"><strong>Pickup QR code</strong><code>P-{{ loan['item_id'] }}-{{ loan['user_id'] }}</code><p>Scan this code at the locker to pick up the item. The seven-day loan begins after a successful scan.</p>
-    {% elif loan['status']=='checked_out' %}<img src="{{ url_for('inventory.return_qr', loan_id=loan['id']) }}" alt="Return QR code for loan {{ loan['id'] }}"><strong>Return QR code</strong><code>R-{{ loan['item_id'] }}-{{ loan['user_id'] }}</code><p>Scan this different code at the locker when returning the complete quantity.</p>
-    {% elif loan['status']=='returned' %}<span class="qr-complete" aria-hidden="true">✓</span><strong>Return complete</strong><p>The locker accepted the return and inventory was updated.</p>
-    {% else %}<span class="qr-waiting" aria-hidden="true">…</span><strong>Pickup QR pending</strong><p>A TA must confirm locker drop-off before this credential is activated.</p>{% endif %}
-  </div></section>
+{% set is_staff = g.user['role'] == 'ta' %}
+{% set is_manual = loan['fulfillment_method'] == 'manual' %}
+<main class="app-page narrow-page">
+  <a class="back-link" href="{{ url_for('inventory.loans') if not is_staff or loan['user_id']==g.user['id'] else url_for('inventory.admin_transactions') }}">← Back to activity</a>
+  <section class="credential-card">
+    <div class="credential-copy">
+      <span class="eyebrow">LOAN #{{ '%04d'|format(loan['id']) }}</span>
+      <h1>{{ loan['item_name'] }}</h1>
+      <p>{{ loan['sku'] }} · {{ loan['storage_location'] }}</p>
+      <div class="credential-status"><span class="status-pill {{ 'overdue' if loan['status']=='checked_out' and loan['due_at'] and loan['due_at'] < now else loan['status'] }}">{% if loan['status']=='awaiting_dropoff' and is_manual %}Awaiting Manual Handoff{% elif loan['status']=='checked_out' and loan['due_at'] and loan['due_at'] < now %}Overdue{% else %}{{ loan['status'].replace('_',' ')|title }}{% endif %}</span></div>
+
+      {% if is_manual %}
+      <ol class="loan-steps" aria-label="Manual checkout progress">
+        <li class="complete">Checkout requested</li>
+        <li class="complete">Manual checkout selected</li>
+        <li class="{{ 'complete' if loan['status'] in ('checked_out','returned') else 'current' }}">Face-to-face handoff</li>
+        <li class="{{ 'complete' if loan['status']=='returned' else 'current' if loan['status']=='checked_out' else '' }}">Student return scan</li>
+      </ol>
+      {% else %}
+      <ol class="loan-steps" aria-label="Locker checkout progress">
+        <li class="complete">Checkout requested</li>
+        <li class="{{ 'complete' if loan['status'] in ('ready_for_pickup','checked_out','returned') else 'current' }}">TA locker drop-off scan</li>
+        <li class="{{ 'complete' if loan['status'] in ('checked_out','returned') else 'current' if loan['status']=='ready_for_pickup' else '' }}">Student pickup scan</li>
+        <li class="{{ 'complete' if loan['status']=='returned' else 'current' if loan['status']=='checked_out' else '' }}">Student return scan</li>
+      </ol>
+      {% endif %}
+
+      <dl class="detail-list">
+        <div><dt>Borrower</dt><dd>{{ loan['user_name'] }}</dd></div>
+        <div><dt>Student ID</dt><dd>#{{ loan['user_id'] }}</dd></div>
+        <div><dt>Item ID</dt><dd>#{{ loan['item_id'] }}</dd></div>
+        <div><dt>Quantity</dt><dd>{{ loan['quantity'] }}</dd></div>
+        <div><dt>Fulfillment</dt><dd>{{ 'Manual face-to-face handoff' if is_manual else 'Smart locker' }}</dd></div>
+        <div><dt>Requested</dt><dd>{{ loan['checked_out_at'][:10] }}</dd></div>
+        {% if loan['manual_selected_at'] %}<div><dt>Manual selected</dt><dd>{{ loan['manual_selected_at'][:16].replace('T',' ') }} UTC</dd></div>{% endif %}
+        {% if loan['dropoff_confirmed_at'] %}<div><dt>{{ 'Manual handoff' if is_manual else 'TA drop-off' }}</dt><dd>{{ loan['dropoff_confirmed_at'][:16].replace('T',' ') }} UTC</dd></div>{% endif %}
+        {% if loan['dropoff_ta_id'] %}<div><dt>Handled by</dt><dd>{{ loan['dropoff_ta_name'] }} · TA ID #{{ loan['dropoff_ta_id'] }}</dd></div>{% endif %}
+        {% if loan['picked_up_at'] and not is_manual %}<div><dt>Picked up</dt><dd>{{ loan['picked_up_at'][:16].replace('T',' ') }} UTC</dd></div>{% endif %}
+        {% if loan['due_at'] %}<div><dt>Due</dt><dd>{{ loan['due_at'][:10] }}</dd></div>{% endif %}
+        {% if loan['returned_at'] %}<div><dt>Returned</dt><dd>{{ loan['returned_at'][:16].replace('T',' ') }} UTC</dd></div>{% endif %}
+      </dl>
+
+      {% if loan['status']=='awaiting_dropoff' and is_manual %}
+      <div class="notice"><strong>Waiting for face-to-face handoff</strong><br>{% if is_staff %}Give the item directly to the student, then confirm the handoff below.{% else %}Meet the TA to receive the item. Your return QR will appear after the TA confirms the handoff.{% endif %}</div>
+      {% elif loan['status']=='awaiting_dropoff' %}
+      <div class="notice"><strong>Waiting for TA locker drop-off</strong><br>{% if is_staff %}Scan the TA-only drop-off QR at the locker, or select manual checkout below.{% else %}The pickup QR will appear after a TA scans their drop-off QR at the locker.{% endif %}</div>
+      {% endif %}
+
+      {% if is_staff and loan['status']=='awaiting_dropoff' and not is_manual %}
+      <form class="dropoff-form" method="post" action="{{ url_for('inventory.select_manual_checkout', loan_id=loan['id']) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="secondary-button" type="submit">Select manual checkout</button>
+      </form>
+      {% elif is_staff and loan['status']=='awaiting_dropoff' and is_manual %}
+      <form class="dropoff-form" method="post" action="{{ url_for('inventory.confirm_manual_handoff', loan_id=loan['id']) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="primary-button" type="submit">Confirm manual drop-off</button>
+      </form>
+      {% endif %}
+    </div>
+
+    <div class="qr-panel">
+      {% if is_staff and loan['status']=='awaiting_dropoff' and not is_manual %}
+      <img src="{{ url_for('inventory.dropoff_qr', loan_id=loan['id']) }}" alt="TA drop-off QR code for loan {{ loan['id'] }}">
+      <strong>TA-only drop-off QR</strong>
+      <code>D-{{ loan['item_id'] }}-{{ loan['user_id'] }}-{{ g.user['id'] }}</code>
+      <p>Scan at the locker to verify your active TA account, open the compartment, and confirm drop-off automatically. Students cannot access this QR.</p>
+      {% elif loan['status']=='ready_for_pickup' %}
+      <img src="{{ url_for('inventory.pickup_qr', loan_id=loan['id']) }}" alt="Pickup QR code for loan {{ loan['id'] }}">
+      <strong>Pickup QR code</strong>
+      <code>P-{{ loan['item_id'] }}-{{ loan['user_id'] }}</code>
+      <p>Scan this code at the locker to pick up the item. The seven-day loan begins after a successful scan.</p>
+      {% elif loan['status']=='checked_out' %}
+      <img src="{{ url_for('inventory.return_qr', loan_id=loan['id']) }}" alt="Return QR code for loan {{ loan['id'] }}">
+      <strong>Return QR code</strong>
+      <code>R-{{ loan['item_id'] }}-{{ loan['user_id'] }}</code>
+      <p>Scan this code at the locker when returning the complete quantity.</p>
+      {% elif loan['status']=='returned' %}
+      <span class="qr-complete" aria-hidden="true">✓</span><strong>Return complete</strong><p>The locker accepted the return and inventory was updated.</p>
+      {% elif is_manual %}
+      <span class="qr-waiting" aria-hidden="true">↔</span><strong>Manual handoff selected</strong><p>No drop-off or pickup QR is used. The return QR appears after the TA confirms the face-to-face handoff.</p>
+      {% else %}
+      <span class="qr-waiting" aria-hidden="true">…</span><strong>Pickup QR pending</strong><p>A TA must scan the private drop-off QR before this credential is activated.</p>
+      {% endif %}
+    </div>
+  </section>
 </main>
 {% endblock %}

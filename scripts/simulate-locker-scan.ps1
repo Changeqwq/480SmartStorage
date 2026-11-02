@@ -33,8 +33,8 @@ if ([string]::IsNullOrWhiteSpace($Code)) {
 }
 
 $Code = $Code.Trim().ToUpperInvariant()
-if ($Code -notmatch '^[PR]-\d+-\d+$') {
-    Write-Host "Invalid code. Use P-ITEM_ID-USER_ID or R-ITEM_ID-USER_ID." -ForegroundColor Red
+if ($Code -notmatch '^(D-\d+-\d+-\d+|[PR]-\d+-\d+)$') {
+    Write-Host "Invalid code. Use D-ITEM_ID-STUDENT_ID-TA_ID, P-ITEM_ID-USER_ID, or R-ITEM_ID-USER_ID." -ForegroundColor Red
     exit 1
 }
 

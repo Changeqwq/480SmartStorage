@@ -6,10 +6,11 @@ student equipment browsing and lending, QR pickup credentials, inventory updates
 transaction history, and a TA/Admin workspace. An optional Purdue SAML SSO module
 remains available for future integration after campus approval.
 
-Each account receives a unique numeric User ID from the database. Locker QR codes
-use `P-ITEM_ID-USER_ID` for pickup and `R-ITEM_ID-USER_ID` for return. After a
-student requests checkout, a TA must confirm locker drop-off before the pickup QR
-is activated. The seven-day due period begins when the locker accepts the pickup.
+Each account receives a unique numeric User ID from the database. TA-only locker
+drop-off codes use `D-ITEM_ID-STUDENT_ID-TA_ID`; student codes use
+`P-ITEM_ID-USER_ID` for pickup and `R-ITEM_ID-USER_ID` for return. The alternative
+manual checkout path records a face-to-face handoff without drop-off or pickup
+scans. Both paths require the student to return the item through the locker.
 
 ## Current status
 
@@ -95,11 +96,13 @@ Sign out and sign in again. The same command with `student` removes staff access
 | `GET /items/<id>` | Item details and availability |
 | `POST /items/<id>/checkout` | Reserve inventory and request TA drop-off |
 | `GET /loans` | Current and historical user loans |
+| `GET /loans/<id>/dropoff-qr.png` | TA-only locker drop-off QR |
 | `GET /loans/<id>/pickup-qr.png` | Pickup QR after TA drop-off |
 | `GET /loans/<id>/return-qr.png` | Separate return QR after pickup |
-| `POST /api/locker/scan` | Authenticated locker pickup/return event |
+| `POST /api/locker/scan` | Authenticated drop-off, pickup, or return event |
 | `GET /admin` | TA/Admin inventory summary |
-| `POST /admin/loans/<id>/confirm-dropoff` | TA locker drop-off confirmation |
+| `POST /admin/loans/<id>/select-manual-checkout` | Select face-to-face fulfillment |
+| `POST /admin/loans/<id>/confirm-manual-handoff` | Confirm student received the item |
 | `GET /admin/items` | Add, edit, restock, or deactivate items |
 | `GET /admin/transactions` | Filter the lending audit trail |
 | `GET /admin/alerts` | Low-stock and overdue alerts |
@@ -108,10 +111,10 @@ Sign out and sign in again. The same command with `student` removes staff access
 
 Checkout and return operations use immediate database transactions so concurrent
 requests cannot silently create negative inventory or double-return an item.
-QR codes contain the requested action, numeric Item ID, and numeric User ID. They
-never contain a password. The code alone is not authorization: the locker gateway
-must authenticate with `LOCKER_API_KEY`, and the backend verifies the current loan
-state before accepting a pickup or return. Use a long random value in deployment.
+QR codes contain the requested action and application IDs; a TA drop-off code also
+contains the logged-in TA ID. They never contain a password. The code alone is not
+authorization: the locker gateway must authenticate with `LOCKER_API_KEY`, and the
+backend verifies loan state plus the active TA role before accepting an action.
 
 ## Test the locker QR workflow
 
@@ -136,75 +139,38 @@ script is `scripts/simulate-locker-scan.ps1` and can also be run directly:
 ```
 
 No external API account or manual key is required for local prototype testing.
-On first startup, `app.py` creates `instance/locker.key`; both that file and the
-local database are ignored by Git. The simulator reads the generated key
-automatically. For a deployed gateway, override it with a long secret in `.env`:
+On first startup, `app.py` creates ignored `instance/locker.key`; the double-click
+simulator reads it automatically. Always enter the exact code printed under the QR.
 
-```env
-LOCKER_API_KEY=prototype-locker-test-key-2026
-```
+### Locker fulfillment test
 
-Restart `app.py` after changing `.env`; environment settings are loaded at startup.
-Complete checkout as a student, then sign in as a TA and confirm the locker drop-off.
-The loan page will display a pickup code in this format:
+1. A student requests checkout.
+2. A TA opens the loan. Only the TA sees `D-ITEM_ID-STUDENT_ID-TA_ID`.
+3. Double-click `Run-Locker-Scan.cmd` and enter the D code. A successful scan
+   verifies the active TA, confirms drop-off, and changes the loan to
+   **Ready for pickup**.
+4. The student opens the loan and sees `P-ITEM_ID-USER_ID`. Run the simulator with
+   that P code. The status becomes **Checked out** and the seven-day loan begins.
+5. The student sees `R-ITEM_ID-USER_ID`. Run the simulator with that R code. The
+   status becomes **Returned** and inventory increases once.
 
-```text
-P-ITEM_ID-USER_ID
-```
+### Manual checkout test
 
-From a second PowerShell window, enter the exact pickup code printed below the QR.
-Do not copy an Item ID or User ID from this README:
+1. A student requests checkout and meets a TA in person.
+2. The TA opens the loan and clicks **Select manual checkout**.
+3. After physically giving the item to the student, the TA clicks
+   **Confirm manual drop-off**. No D or P scan is used.
+4. The loan immediately becomes **Checked out**, the seven-day loan begins, and the
+   student receives the normal R code for locker return.
 
-```powershell
-$lockerHeaders = @{
-    "X-Locker-Key" = "prototype-locker-test-key-2026"
-}
-
-$pickupCode = Read-Host "Enter the pickup code shown below the QR"
-
-$lockerBody = @{
-    code = $pickupCode
-} | ConvertTo-Json
-
-Invoke-RestMethod `
-    -Uri "http://127.0.0.1:5000/api/locker/scan" `
-    -Method Post `
-    -Headers $lockerHeaders `
-    -ContentType "application/json" `
-    -Body $lockerBody
-```
-
-The response should identify the loan and report `checked_out`. Refresh the loan
-page to see a separate return QR in the format `R-ITEM_ID-USER_ID`. Enter the exact
-new return code printed below that QR and send it with the same command:
-
-```powershell
-$returnCode = Read-Host "Enter the return code shown below the QR"
-
-$lockerBody = @{
-    code = $returnCode
-} | ConvertTo-Json
-
-Invoke-RestMethod `
-    -Uri "http://127.0.0.1:5000/api/locker/scan" `
-    -Method Post `
-    -Headers $lockerHeaders `
-    -ContentType "application/json" `
-    -Body $lockerBody
-```
-
-The response should report `returned`. Refresh the page to see **Return complete**
-and confirm that inventory increased once. Repeating the return scan produces a
-`409` response and does not increase inventory again.
-
-The same request can be sent with Postman: use `POST`, select raw JSON for the body,
-send `{"code":"PASTE_THE_EXACT_QR_CODE_HERE"}`, and add an `X-Locker-Key` header
-matching `.env`.
+Repeating any completed scan produces a `409` response and does not repeat the
+inventory change. A phone camera only decodes the text; use the simulator to submit
+the code to the local backend.
 
 Common responses:
 
-- `401`: the `X-Locker-Key` header is missing or does not match `.env`.
-- `409`: the code is invalid or the loan is not at the required pickup/return stage.
+- `401`: the simulator key does not match the running server; restart `app.py`.
+- `409`: the code is invalid, already used, or the loan is at a different stage.
 - `503`: the server has not been restarted since the local key was created.
 
 ## Deployment boundary

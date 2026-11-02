@@ -10,17 +10,23 @@ commands into the selected hardware protocol and report physical state changes.
 Web app → Backend authorization → Locker gateway → Lock controller → Lock / sensors
 ```
 
-The web app generates two different QR codes for each active loan:
+The web app generates three action-specific QR formats:
 
+- `D-ITEM_ID-STUDENT_ID-TA_ID` for TA locker drop-off (TA-only page)
 - `P-ITEM_ID-USER_ID` for pickup
 - `R-ITEM_ID-USER_ID` for return
 
 The numeric User ID is an application identifier, not a Purdue identifier. A code
 contains no password, but it is predictable and must not be treated as a secret.
 The locker gateway authenticates to the backend with `X-Locker-Key`, then sends the
-scanned code to `POST /api/locker/scan`. The backend accepts pickup only after a TA
-confirms drop-off and accepts return only after pickup. Duplicate scans do not
-repeat inventory changes.
+scanned code to `POST /api/locker/scan`. A D scan verifies that the supplied TA ID
+still belongs to an active TA account and automatically confirms locker drop-off.
+The backend accepts pickup only after that scan and accepts return only after pickup.
+Duplicate scans do not repeat inventory changes.
+
+Manual checkout is a separate web workflow. The TA selects manual checkout and
+confirms the face-to-face handoff. It skips D and P scans, starts the seven-day loan,
+and still requires the student to use the R code for locker return.
 
 ```http
 POST /api/locker/scan

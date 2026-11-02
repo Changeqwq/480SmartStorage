@@ -61,15 +61,20 @@ class InventoryWorkflowTests(unittest.TestCase):
         loan_url = response.headers['Location']
         loan_id = int(loan_url.rsplit('/', 1)[1])
         with closing(sqlite3.connect(self.database)) as connection:
+            connection.row_factory = sqlite3.Row
             available = connection.execute('SELECT quantity_available FROM items WHERE id=?',
                                            (item['id'],)).fetchone()[0]
             self.assertEqual(available, item['quantity_available'] - 2)
             self.assertEqual(connection.execute('SELECT COUNT(*) FROM transactions').fetchone()[0], 1)
             loan = connection.execute('SELECT * FROM loans WHERE id=?', (loan_id,)).fetchone()
-            user_id = loan[1]
-            self.assertEqual(loan[4], 'awaiting_dropoff')
-            self.assertIsNone(loan[8])
+            user_id = loan['user_id']
+            self.assertEqual(loan['status'], 'awaiting_dropoff')
+            self.assertEqual(loan['fulfillment_method'], 'locker')
+            self.assertIsNone(loan['due_at'])
         self.assertEqual(self.client.get(f'/loans/{loan_id}/pickup-qr.png').status_code, 409)
+        self.assertEqual(self.client.get(f'/loans/{loan_id}/dropoff-qr.png').status_code, 403)
+        student_page = self.client.get(loan_url).data
+        self.assertNotIn(b'TA-only drop-off QR', student_page)
 
         self.logout()
         self.register_and_login('staff', 'Staff User')
@@ -79,9 +84,23 @@ class InventoryWorkflowTests(unittest.TestCase):
         token = self.csrf('/login')
         self.client.post('/auth/local/login', data={'csrf_token': token,
                          'username': 'staff', 'password': 'prototype-123'})
-        token = self.csrf(loan_url)
-        self.assertEqual(self.client.post(f'/admin/loans/{loan_id}/confirm-dropoff',
-                                         data={'csrf_token': token}).status_code, 303)
+        with closing(sqlite3.connect(self.database)) as connection:
+            staff_id = connection.execute(
+                "SELECT id FROM users WHERE principal='local:staff'"
+            ).fetchone()[0]
+        dropoff_qr = self.client.get(f'/loans/{loan_id}/dropoff-qr.png')
+        self.assertEqual(dropoff_qr.status_code, 200)
+        self.assertEqual(dropoff_qr.headers['X-SmartStorage-Code'],
+                         f"D-{item['id']}-{user_id}-{staff_id}")
+        invalid_ta = self.client.post('/api/locker/scan',
+            json={'code': f"D-{item['id']}-{user_id}-{user_id}"},
+            headers={'X-Locker-Key': 'locker-test-key'})
+        self.assertEqual(invalid_ta.status_code, 409)
+        dropoff = self.client.post('/api/locker/scan',
+            json={'code': f"D-{item['id']}-{user_id}-{staff_id}"},
+            headers={'X-Locker-Key': 'locker-test-key'})
+        self.assertEqual(dropoff.status_code, 200)
+        self.assertEqual(dropoff.json['status'], 'ready_for_pickup')
 
         self.logout()
         token = self.csrf('/login')
@@ -112,6 +131,75 @@ class InventoryWorkflowTests(unittest.TestCase):
             self.assertEqual(connection.execute('SELECT quantity_available FROM items WHERE id=?',
                                                 (item['id'],)).fetchone()[0], item['quantity_available'])
             self.assertEqual(connection.execute('SELECT COUNT(*) FROM transactions').fetchone()[0], 4)
+
+    def test_manual_checkout_skips_dropoff_and_pickup_scans(self):
+        item = self.item()
+        response = self.client.post(f"/items/{item['id']}/checkout",
+                                    data={'csrf_token': self.csrf(f"/items/{item['id']}"),
+                                          'quantity': '1'})
+        loan_url = response.headers['Location']
+        loan_id = int(loan_url.rsplit('/', 1)[1])
+        with closing(sqlite3.connect(self.database)) as connection:
+            student_id = connection.execute(
+                "SELECT id FROM users WHERE principal='local:student'"
+            ).fetchone()[0]
+        token = self.csrf(loan_url)
+        self.assertEqual(self.client.post(f'/admin/loans/{loan_id}/select-manual-checkout',
+                                         data={'csrf_token': token}).status_code, 403)
+
+        self.logout()
+        self.register_and_login('staff', 'Staff User')
+        runner = self.app.test_cli_runner()
+        self.assertEqual(runner.invoke(args=['set-role', 'local:staff', 'ta']).exit_code, 0)
+        self.logout()
+        token = self.csrf('/login')
+        self.client.post('/auth/local/login', data={'csrf_token': token,
+                         'username': 'staff', 'password': 'prototype-123'})
+        with closing(sqlite3.connect(self.database)) as connection:
+            staff_id = connection.execute(
+                "SELECT id FROM users WHERE principal='local:staff'"
+            ).fetchone()[0]
+
+        token = self.csrf(loan_url)
+        selected = self.client.post(f'/admin/loans/{loan_id}/select-manual-checkout',
+                                    data={'csrf_token': token})
+        self.assertEqual(selected.status_code, 303)
+        self.assertEqual(self.client.get(f'/loans/{loan_id}/dropoff-qr.png').status_code, 409)
+        self.assertIn(b'Confirm manual drop-off', self.client.get(loan_url).data)
+        token = self.csrf(loan_url)
+        confirmed = self.client.post(f'/admin/loans/{loan_id}/confirm-manual-handoff',
+                                     data={'csrf_token': token})
+        self.assertEqual(confirmed.status_code, 303)
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.row_factory = sqlite3.Row
+            loan = connection.execute('SELECT * FROM loans WHERE id=?', (loan_id,)).fetchone()
+            self.assertEqual(loan['status'], 'checked_out')
+            self.assertEqual(loan['fulfillment_method'], 'manual')
+            self.assertEqual(loan['dropoff_ta_id'], staff_id)
+            self.assertIsNotNone(loan['due_at'])
+            self.assertIsNone(loan['returned_at'])
+
+        self.logout()
+        token = self.csrf('/login')
+        self.client.post('/auth/local/login', data={'csrf_token': token,
+                         'username': 'student', 'password': 'prototype-123'})
+        page = self.client.get(loan_url).data
+        self.assertIn(b'Return QR code', page)
+        self.assertNotIn(b'Pickup QR code', page)
+        return_qr = self.client.get(f'/loans/{loan_id}/return-qr.png')
+        self.assertEqual(return_qr.headers['X-SmartStorage-Code'],
+                         f"R-{item['id']}-{student_id}")
+        returned = self.client.post('/api/locker/scan',
+            json={'code': f"R-{item['id']}-{student_id}"},
+            headers={'X-Locker-Key': 'locker-test-key'})
+        self.assertEqual(returned.status_code, 200)
+        self.assertEqual(returned.json['status'], 'returned')
+        with closing(sqlite3.connect(self.database)) as connection:
+            self.assertEqual(connection.execute(
+                'SELECT quantity_available FROM items WHERE id=?', (item['id'],)
+            ).fetchone()[0], item['quantity_available'])
+            self.assertEqual(connection.execute('SELECT COUNT(*) FROM transactions').fetchone()[0], 3)
 
     def test_locker_api_requires_key_and_valid_code(self):
         self.assertEqual(self.client.post('/api/locker/scan', json={'code': 'P-1-1'}).status_code, 401)
